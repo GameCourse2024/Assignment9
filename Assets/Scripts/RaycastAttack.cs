@@ -1,18 +1,22 @@
 using Fusion;
 using UnityEngine;
 using UnityEngine.InputSystem;
+using System.Collections;
+
 
 // from Fusion tutorial: https://doc.photonengine.com/fusion/current/tutorials/shared-mode-basics/5-remote-procedure-calls
 public class RaycastAttack : NetworkBehaviour 
 {
+    private float cooldownTime = 1f;
+    private bool canShoot = true;
+    private Animator animator;
     [SerializeField] int Damage;
+    [SerializeField] int PointsPerHit = 1;
 
     [SerializeField] InputAction attack;
     [SerializeField] InputAction attackLocation;
 
     [SerializeField] float shootDistance = 5f;
-
-    [SerializeField] GameObject projectilePrefab;
 
     private void OnEnable()
     { 
@@ -21,6 +25,11 @@ public class RaycastAttack : NetworkBehaviour
     }
 
     private void OnDisable() { attack.Disable(); attackLocation.Disable(); }
+    public override void Spawned()
+    {
+        base.Spawned();
+        animator = GetComponent<Animator>();
+    }
     void OnValidate() 
     {
         // Provide default bindings for the input actions. Based on answer by DMGregory: https://gamedev.stackexchange.com/a/205345/18261
@@ -39,8 +48,11 @@ public class RaycastAttack : NetworkBehaviour
     void Update() {
         if (!HasStateAuthority)  return;
 
-        if (attack.WasPerformedThisFrame()) 
+        if (canShoot && attack.WasPerformedThisFrame())
         {
+            StartCoroutine(AttackAnimation());
+            StartCoroutine(ShotCooldownTimer());
+
             Vector2 attackLocationInScreenCoordinates = attackLocation.ReadValue<Vector2>();
 
             var camera = Camera.main;
@@ -54,14 +66,39 @@ public class RaycastAttack : NetworkBehaviour
                 GameObject hitObject = hit.transform.gameObject;
                 Debug.Log("Raycast hit: name="+ hitObject.name+" tag="+hitObject.tag+" collider="+hit.collider);
                 if (hitObject.TryGetComponent<Health>(out var health))
-                 {
+                {
                     Debug.Log("Dealing damage");
                     health.DealDamageRpc(Damage);
-                    
-                    // Instantiate the projectile at the hit point (you may need to adjust the position)
-                    Instantiate(projectilePrefab, hit.point, Quaternion.identity);
+                
+                    AddPointsOnServerRpc(PointsPerHit);
                 }
             }
+        }
+    }
+    IEnumerator AttackAnimation()
+    {
+        Debug.Log("Starting Attack Animation");
+        animator.SetBool("isAttacking", true);
+        yield return new WaitForSeconds(cooldownTime);
+        animator.SetBool("isAttacking", false);
+        Debug.Log("Ending Attack Animation");
+    }
+    IEnumerator ShotCooldownTimer()
+    {
+        canShoot = false;
+        yield return new WaitForSeconds(cooldownTime);
+        canShoot = true;
+    }
+
+    [Rpc(RpcSources.All, RpcTargets.StateAuthority)]
+    // All players can call this function; only the StateAuthority receives the call.
+    private void AddPointsOnServerRpc(int pointsToAdd)
+    {
+        // The code inside here will run on the server, modifying Networked variable.
+        if (TryGetComponent<Points>(out var points))
+        {
+            Debug.Log("Adding points on server");
+            points.AddPoints(pointsToAdd);
         }
     }
 }

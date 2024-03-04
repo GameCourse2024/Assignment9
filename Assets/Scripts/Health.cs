@@ -1,23 +1,55 @@
 using Fusion;
 using UnityEngine;
+using System.Collections;
 
 public class Health : NetworkBehaviour
 {
+    private float cooldownTime = 1f;
+
     [SerializeField] NumberField HealthDisplay;
+    private Animator animator;
 
     [Networked(OnChanged = nameof(NetworkedHealthChanged))]
     public int NetworkedHealth { get; set; } = 100;
-    private static void NetworkedHealthChanged(Changed<Health> changed) {
-        // Here you would add code to update the player's healthbar.
+    private bool isDead = false;
+
+    public override void Spawned()
+    {
+        base.Spawned();
+        animator = GetComponent<Animator>();
+    }
+
+    private static void NetworkedHealthChanged(Changed<Health> changed)
+    {
         Debug.Log($"Health changed to: {changed.Behaviour.NetworkedHealth}");
         changed.Behaviour.HealthDisplay.SetNumber(changed.Behaviour.NetworkedHealth);
+
+        if (changed.Behaviour.NetworkedHealth <= 0 && !changed.Behaviour.isDead)
+        {
+            changed.Behaviour.isDead = true;
+            changed.Behaviour.animator.SetBool("isDead", true);
+        }
     }
 
     [Rpc(RpcSources.All, RpcTargets.StateAuthority)]
-    // All players can call this function; only the StateAuthority receives the call.
-    public void DealDamageRpc(int damage) {
-        // The code inside here will run on the client which owns this object (has state and input authority).
+    public void DealDamageRpc(int damage)
+    {
         Debug.Log("Received DealDamageRpc on StateAuthority, modifying Networked variable");
         NetworkedHealth -= damage;
+
+        // Play hit animation only on the client where the damage is dealt
+        if (HasStateAuthority && !isDead)
+        {
+            StartCoroutine(HitAnimation());
+        }
+    }
+
+    private IEnumerator HitAnimation()
+    {
+        Debug.Log("Starting hit Animation");
+        animator.SetBool("isHit", true);
+        yield return new WaitForSeconds(cooldownTime);
+        animator.SetBool("isHit", false);
+        Debug.Log("Ending hit Animation");
     }
 }
